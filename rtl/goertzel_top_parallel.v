@@ -88,29 +88,20 @@ module goertzel_top1 (
     reg acq_en_prev;
     wire acq_start = acq_en && !acq_en_prev;
 
-    // -- XADC interface and DRP control ------------------------
+    // -- XADC interface: read only the physical A3 input -------
+    // A3_p/A3_n are connected to VAUX2 in this design (channel 0x12).
+    // EOC marks a completed conversion; DRDY marks valid DRP data.
+
+    localparam [4:0] A3_CHANNEL = 5'h12;
 
     wire        xadc_drdy;
     wire        xadc_eoc;
     wire [15:0] xadc_data;
     wire [4:0]  xadc_channel;
 
-    reg xadc_eoc_prev;
-    wire xadc_eoc_pulse = xadc_eoc && !xadc_eoc_prev;
-
-    always @(posedge clk_8mhz) begin
-        if (reset_8mhz)
-            xadc_eoc_prev <= 1'b0;
-        else
-            xadc_eoc_prev <= xadc_eoc;
-    end
-
-    reg [4:0] pending_channel;
-    reg       pending_valid;
-    reg       drp_busy;
-    reg       drp_enable;
-    reg [6:0] drp_address;
-    reg [4:0] requested_channel;
+    wire        a3_eoc = xadc_eoc && (xadc_channel == A3_CHANNEL);
+    wire        drp_enable = acq_en && !reset_8mhz && a3_eoc;
+    wire [6:0]  drp_address = {2'b00, A3_CHANNEL};
 
     xadc_3 u_xadc (
         .dclk_in    (clk_8mhz),
@@ -132,42 +123,8 @@ module goertzel_top1 (
         .vp_in     (1'b0),  .vn_in   (1'b0)
     );
 
-    always @(posedge clk_8mhz) begin
-        if (reset_8mhz) begin
-            pending_channel   <= 5'd0;
-            pending_valid     <= 1'b0;
-            drp_busy          <= 1'b0;
-            drp_enable        <= 1'b0;
-            drp_address       <= 7'd0;
-            requested_channel <= 5'd0;
-        end else begin
-            drp_enable <= 1'b0;
-
-            if (acq_en && xadc_eoc_pulse && !pending_valid) begin
-                pending_channel <= xadc_channel;
-                pending_valid   <= 1'b1;
-            end
-
-            if (acq_en && pending_valid && !drp_busy) begin
-                drp_address       <= {2'b00, pending_channel};
-                requested_channel <= pending_channel;
-                drp_enable        <= 1'b1;
-                drp_busy          <= 1'b1;
-                pending_valid     <= 1'b0;
-            end
-
-            if (!acq_en)
-                pending_valid <= 1'b0;
-
-            if (xadc_drdy)
-                drp_busy <= 1'b0;
-        end
-    end
-
     wire [11:0] adc_sample = xadc_data[15:4];
-
-    wire adc_a3_valid = acq_en && drp_busy && xadc_drdy &&
-                        (requested_channel == 5'h10);
+    wire adc_a3_valid = acq_en && !reset_8mhz && xadc_drdy;
 
     // -- DC offset removal -------------------------------------
 
